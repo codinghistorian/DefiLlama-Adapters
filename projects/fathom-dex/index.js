@@ -1,46 +1,92 @@
 const sdk = require("@defillama/sdk");
 const { getUniTVL } = require("../helper/unknownTokens");
 
-const WXDC = '0x951857744785e80e2de051c32ee7b25f9c458c42';
-const WXDCHolders = '0x9B4aCeFE2dB986Ca080Dc01d137e6566dBE0aA3a'; // CDP Vault CollateralPoolId "0x5844430000000000000000000000000000000000000000000000000000000000"
+const getDefaultQueueAbi = {
+  "constant": true,
+  "inputs": [],
+  "name": "getDefaultQueue",
+  "outputs": [{ "internalType": "address[]", "name": "", "type": "address[]" }],
+  "payable": false,
+  "stateMutability": "view",
+  "type": "function"
+};
 
+const getVaultsAbi = {
+  "constant": true,
+  "inputs": [],
+  "name": "getVaults",
+  "outputs": [{ "internalType": "address[]", "name": "", "type": "address[]" }],
+  "payable": false,
+  "stateMutability": "view",
+  "type": "function"
+};
+
+const chain = 'xdc';
+const WXDC = '0x951857744785e80e2de051c32ee7b25f9c458c42';
+const WXDCHolders = [
+  '0x9B4aCeFE2dB986Ca080Dc01d137e6566dBE0aA3a', // CDP Vault CollateralPoolId "0x5844430000000000000000000000000000000000000000000000000000000000"
+];
+const FathomVaultFactoryAddress = "0x0c6e3fd64D5f33eac0DCCDd887A8c7512bCDB7D6";
 const FXD = '0x49d3f7543335cf38Fa10889CCFF10207e22110B5';
-const FXDHolders = [
-  "0x3C8e9896933B374E638f9a5C309535409129aaA2", // Vault0
-  "0xE2DEa7e0c272dE04e8708674dAE73ebd6E5c1455", // Strategy0 of Vault0
-]
+
 
 const fetchWXDCBalances = async (timestamp, block, chainBlocks) => {
   const balances = {};
-  const chain = 'xdc';
   const blockXdc = chainBlocks[chain];
-  const balance = await sdk.api.erc20.balanceOf({
-    target: WXDC,
-    owner: WXDCHolders,
-    block: blockXdc,
-    chain,
-  });
 
-  sdk.util.sumSingleBalance(balances, `${chain}:${WXDC}`, balance.output);
+  for (const holder of WXDCHolders) {
+    const balance = await sdk.api.erc20.balanceOf({
+      target: WXDC,
+      owner: holder,
+      block: blockXdc,
+      chain,
+    });
+    sdk.util.sumSingleBalance(balances, `${chain}:${WXDC}`, balance.output);
+  }
+
   return balances;
 };
 
 const fetchFXDBalances = async (timestamp, block, chainBlocks) => {
   const balances = {};
-  const chain = 'xdc';
   const blockXdc = chainBlocks[chain];
-  for (const fxdHolder of FXDHolders) {
+
+  const vaultAddressesResult = await sdk.api.abi.call({
+    target: FathomVaultFactoryAddress,
+    abi: getVaultsAbi,
+    block: blockXdc,
+    chain,
+  });
+
+  const vaultAddresses = vaultAddressesResult.output;
+
+  const queueAddresses = await Promise.all(vaultAddresses.map(async (vaultAddress) => {
+    const result = await sdk.api.abi.call({
+      target: vaultAddress,
+      abi: getDefaultQueueAbi,
+      block: blockXdc,
+      chain,
+    });
+    return result.output;
+  }));
+
+  const flattenedQueueAddresses = queueAddresses.flat();
+
+  const allAddresses = [...vaultAddresses, ...flattenedQueueAddresses];
+
+  for (const address of allAddresses) {
     const balance = await sdk.api.erc20.balanceOf({
       target: FXD,
-      owner: fxdHolder,
+      owner: address,
       block: blockXdc,
       chain,
     });
 
     sdk.util.sumSingleBalance(balances, `${chain}:${FXD}`, balance.output);
   }
+
   return balances;
-}
+};
 
 module.exports = {
   xdc: {
